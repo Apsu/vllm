@@ -3112,6 +3112,8 @@ class CompilationConfig(BaseModel):
             self.inductor_compile_config[k] = func if isinstance(
                 func, InductorPass) else CallableInductorPass(func)
 
+        if torch.__version__.startswith("2.6"):
+            self.inductor_compile_config['enable_auto_functionalized_v2'] = False
         self.enabled_custom_ops = Counter()
         self.disabled_custom_ops = Counter()
         self.traced_files = set()
