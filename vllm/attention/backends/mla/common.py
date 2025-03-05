@@ -7,22 +7,22 @@ First we define:
 Sq      as Q sequence length
 Skv     as KV sequence length
 
-MLA has two possible ways of computing, a data-movement friendly approach and a 
-compute friendly approach, we generally want to use the compute friendly 
-approach for "prefill" (i.e. the ratio Sq / Skv is "small", is near 1) 
-and the data-movement friendly approach for "decode" (i.e. the ratio 
-Sq / Skv is "large"). 
+MLA has two possible ways of computing, a data-movement friendly approach and a
+compute friendly approach, we generally want to use the compute friendly
+approach for "prefill" (i.e. the ratio Sq / Skv is "small", is near 1)
+and the data-movement friendly approach for "decode" (i.e. the ratio
+Sq / Skv is "large").
 
-NOTE what we deem small and large is currently determined by if its labelled 
-prefill or decode by the scheduler, but this is something we should probably 
+NOTE what we deem small and large is currently determined by if its labelled
+prefill or decode by the scheduler, but this is something we should probably
 tune.
 
 Main reference: DeepseekV2 paper, and FlashInfer Implementation
 (https://arxiv.org/abs/2405.04434 and https://github.com/flashinfer-ai/flashinfer/pull/551).
 
 Deepseek's MLA attention works the following way:
-* Use a single latent vector to represent the per-token entry of the KV cache.  
-* For decode (i.e. the memory friendly approach) the attention "simulates" a 
+* Use a single latent vector to represent the per-token entry of the KV cache.
+* For decode (i.e. the memory friendly approach) the attention "simulates" a
 multi-head attention, while the compute is similar to multi-query attention.
 
 Below is example of both paths assuming batchsize = 1
@@ -79,10 +79,10 @@ spda_o = scaled_dot_product_attention(
     torch.cat([q_nope, q_pe], dim=-1),
     torch.cat([k_nope, k_pe.unsqueeze(1).expand(-1, N, -1)], dim=-1),
     v
-) 
+)
 return spda_o @ W_O
 
-NOTE: in the actual code, 
+NOTE: in the actual code,
     `kv_b_proj` is [W_UK; W_UV] concatnated per head
     `q_b_proj` is [W_UQ; W_QR] concatnated per head
     `out_proj` is W_O
@@ -125,20 +125,20 @@ return spda_o.reshape(-1, N * Lkv) @ W_UV_O
 
 ## Chunked Prefill
 
-For chunked prefill we want to use the compute friendly algorithm. We are 
-assuming sufficiently large Sq / Skv ratio, in the future may want to switch to 
+For chunked prefill we want to use the compute friendly algorithm. We are
+assuming sufficiently large Sq / Skv ratio, in the future may want to switch to
 the data-movement friendly approach if the chunk (i.e. `Sq`) is small.
 
 However, the compute-friendly approach can potentially run out of memory if Skv
 is large due to: `k_nope = (kv_c @ W_UK).view(Skv, N, P)`
 
-To mitigate this, we chunk the computation of attention with respect to the 
-current context (i.e. `cache_kv_c` and `cache_k_pe`) so that we can used a 
+To mitigate this, we chunk the computation of attention with respect to the
+current context (i.e. `cache_kv_c` and `cache_k_pe`) so that we can used a
 fixed workspace size.
 
 The chunked prefill approach is as follows:
 
-MCC        Max chunk of context to process per iter, computed dynamically, 
+MCC        Max chunk of context to process per iter, computed dynamically,
            used to bound the memory usage
 
 q_c        = h_t @ W_DQ
@@ -160,7 +160,7 @@ curr_o, curr_lse = scaled_dot_product_attention(
     new_v,
     casual=True,
     return_softmax_lse=True
-) 
+)
 
 // Compute attention with the already existing context
 for chunk_idx in range(cdiv(C, MCC)):
@@ -171,17 +171,17 @@ for chunk_idx in range(cdiv(C, MCC)):
     cache_k_pe_chunk   = cache_k_pe[chunk_start:chunk_end]
     cache_k_nope_chunk = (cache_kv_c_chunk @ W_UK).view(-1, N, P)
     cache_v_chunk      = (cache_kv_c_chunk @ W_UV).view(-1, N, V)
-    
+
     chunk_o, chunk_lse = scaled_dot_product_attention(
         torch.cat([q_nope, q_pe], dim=-1),
-        torch.cat([cache_k_nope_chunk, 
-                   cache_k_pe_chunk.unsqueeze(1).expand(-1, N, -1)], 
+        torch.cat([cache_k_nope_chunk,
+                   cache_k_pe_chunk.unsqueeze(1).expand(-1, N, -1)],
                    dim=-1),
         cache_v_chunk,
         casual=False,
         return_softmax_lse=True
     )
-    
+
     curr_o, curr_lse = merge_attn_states(
         suffix_output=curr_o,
         suffix_lse=curr_lse,
@@ -313,8 +313,10 @@ class MLACommonState(AttentionState, Generic[T]):
         cache_config = runner.cache_config
 
         self.chunked_prefill_enabled = scheduler_config.chunked_prefill_enabled
+        self.enable_prefix_caching = cache_config.enable_prefix_caching
 
-        if self.chunked_prefill_enabled:
+        if self.chunked_prefill_enabled \
+                or self.enable_prefix_caching:  # reuse chunked prefill workspace for prefix caching
             self.chunked_prefill_workspace_size = min(
                 # Max sure there is enough for 8 full length request or at least
                 # 4 pages of cache per request
@@ -430,7 +432,8 @@ class MLACommonState(AttentionState, Generic[T]):
                 "TritonMLAState does not support encoder/decoder yet")
 
     def begin_forward(self, model_input):
-        if self.chunked_prefill_enabled:
+        if self.chunked_prefill_enabled \
+                or self.enable_prefix_caching:  # reuse chunked prefill workspace for prefix caching
             if not hasattr(self, "chunked_prefill_workspace"):
                 # not self.runner.device does not return the correct device
                 # for this process, (init_device sets the correct device but
@@ -451,9 +454,9 @@ class MLACommonState(AttentionState, Generic[T]):
 
 @dataclass
 class MLACommonMetadata(AttentionMetadata):
-    """Metadata for MLACommon. 
-    
-    NOTE: Please read the comment at the top of the file before trying to 
+    """Metadata for MLACommon.
+
+    NOTE: Please read the comment at the top of the file before trying to
     understand this class
 
     NOTE: Any python object stored here is not updated when it is
@@ -736,7 +739,7 @@ class MLACommonMetadata(AttentionMetadata):
 
 class MLACommonMetadataBuilder(AttentionMetadataBuilder[T], Generic[T]):
     """
-    NOTE: Please read the comment at the top of the file before trying to 
+    NOTE: Please read the comment at the top of the file before trying to
     understand this class
     """
 
@@ -748,7 +751,8 @@ class MLACommonMetadataBuilder(AttentionMetadataBuilder[T], Generic[T]):
         self.chunked_prefill_enabled = \
             self.runner.scheduler_config.chunked_prefill_enabled
 
-        if self.chunked_prefill_enabled:
+        if self.chunked_prefill_enabled \
+            or self.enable_prefix_caching:  # reuse chunked prefill workspace for prefix caching
             attn_state = self.input_builder.runner.attn_state
             self.chunked_prefill_workspace_size = \
                 attn_state.chunked_prefill_workspace_size
@@ -920,7 +924,8 @@ class MLACommonMetadataBuilder(AttentionMetadataBuilder[T], Generic[T]):
         context_chunk_seq_tot = None
         context_chunk_max_seq_lens = None
 
-        if self.chunked_prefill_enabled and self.num_prefills > 0 \
+        if (self.chunked_prefill_enabled or self.enable_prefix_caching) \
+            and self.num_prefills > 0 \
             and context_lens_tensor is not None \
             and context_lens_tensor[:self.num_prefills].max() > 0:
 
@@ -1002,7 +1007,7 @@ class MLACommonMetadataBuilder(AttentionMetadataBuilder[T], Generic[T]):
 
 class MLACommonImpl(MLAAttentionImpl[T], Generic[T]):
     """
-    NOTE: Please read the comment at the top of the file before trying to 
+    NOTE: Please read the comment at the top of the file before trying to
     understand this class
     """
 
