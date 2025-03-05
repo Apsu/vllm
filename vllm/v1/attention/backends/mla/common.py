@@ -347,8 +347,10 @@ class MLACommonMetadataBuilder(Generic[T]):
         model_config = runner.model_config
         cache_config = runner.cache_config
         self.chunked_prefill_enabled = scheduler_config.chunked_prefill_enabled
+        self.enable_prefix_caching = cache_config.enable_prefix_caching
 
-        if self.chunked_prefill_enabled:
+        if self.chunked_prefill_enabled \
+            or self.enable_prefix_caching:  # reuse chunked prefill workspace
             self.chunked_prefill_workspace_size = min(
                 # Max sure there is enough for 8 full length request or at least
                 # 4 pages of cache per request
@@ -457,7 +459,8 @@ class MLACommonMetadataBuilder(Generic[T]):
         context_lens_tensor = \
             num_computed_tokens_cpu_tensor.to(device, non_blocking=True)
 
-        if self.chunked_prefill_enabled and self._num_prefills > 0 \
+        if (self.chunked_prefill_enabled or self.enable_prefix_caching) \
+            and self._num_prefills > 0 \
             and context_lens_tensor[self._num_decodes:].max() > 0:
             # NOTE: it is recommend you read the `Chunked Prefill` section in
             # the comment at the top of the file before trying to understand
