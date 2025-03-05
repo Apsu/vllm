@@ -18,8 +18,8 @@ logger = init_logger(__name__)
 class BlockHashType(NamedTuple):
     """Hash value of a block (int), the token IDs in the block, and extra keys.
     We keep a tuple of token IDs and extra keys to reduce the likelihood of
-    hash collisions when the hash value is the same. But please note that 
-    hash collisions can still theoretically occur, albeit with an extremely 
+    hash collisions when the hash value is the same. But please note that
+    hash collisions can still theoretically occur, albeit with an extremely
     low probability.
     """
     # Hash value of the block in an integer.
@@ -83,6 +83,7 @@ class PrefixCachingMetrics:
         self.aggregated_query_total = 0
         self.aggregated_query_hit = 0
         self.query_queue.clear()
+        self.reset = False
 
     @property
     def hit_rate(self) -> float:
@@ -148,7 +149,7 @@ class FreeKVCacheBlockQueue:
     builtin deque to support removing a block in the middle of the queue
     in O(1) time. To close the performance gap to the builtin deque which is
     implemented in C++, this class does not allocate any Python objects when
-    manipulating the linked list. Instead, this class manipulates the 
+    manipulating the linked list. Instead, this class manipulates the
     prev_free_block and next_free_block attributes of the given blocks.
 
     The queue is ordered by block ID in the beginning. When a block is allocated
@@ -178,7 +179,7 @@ class FreeKVCacheBlockQueue:
 
     def popleft(self) -> KVCacheBlock:
         """Pop the first free block and reduce num_free_blocks by 1.
-        
+
         Returns:
             The first free block.
         """
@@ -191,7 +192,7 @@ class FreeKVCacheBlockQueue:
 
     def remove(self, block: KVCacheBlock) -> None:
         """Remove a block in the free list and reduce num_free_blocks by 1.
-        
+
         Args:
             block: The block to remove.
         """
@@ -235,7 +236,7 @@ class FreeKVCacheBlockQueue:
 
     def get_all_free_blocks(self) -> list[KVCacheBlock]:
         """Get all free blocks in the free list. Mainly used for testing.
-        
+
         Returns:
             A list of free blocks.
         """
@@ -251,10 +252,10 @@ def need_extra_keys(request: Request) -> bool:
     """Check whether the blocks allocated to this request need extra hash keys.
 
     Args:
-        request (Request): The request. 
+        request (Request): The request.
 
     Returns:
-        bool: Whether blocks allocated to this request need extra hash keys. 
+        bool: Whether blocks allocated to this request need extra hash keys.
     """
 
     # Multimodal requests need to include the MM hash.
@@ -269,13 +270,13 @@ def _gen_mm_extra_hash_keys(request: Request, start_token_idx: int,
     computation. For multi-modal inputs, the extra keys are
     (mm_hash, start_offset) that indicate a mm input contained in the
     block and its starting offset in the block tokens.
-    
+
     Args:
         request: The request object.
         start_token_idx: The start token index of the block.
         end_token_idx: The end token index of the block.
         start_mm_idx: The start multi-modal index of the block.
-    
+
     Returns:
         A tuple of extra keys and the next multi-modal index.
     """
@@ -333,10 +334,10 @@ def _gen_mm_extra_hash_keys(request: Request, start_token_idx: int,
 
 def _gen_lora_extra_hash_keys(request: Request) -> list[int]:
     """Generate extra keys related to LoRA for block hash computation.
-    
+
     Args:
         request: The request object.
-    
+
     Returns:
         Return LoRA id of the request if it is a LoRA request. Return empty
         list otherwise.
@@ -351,13 +352,13 @@ def generate_block_hash_extra_keys(
         start_mm_idx: int) -> tuple[Optional[tuple[Any, ...]], int]:
     """Generate extra keys for the block hash. The extra keys can come from
     the multi-modal inputs and request specific metadata (e.g., LoRA ID).
-    
+
     Args:
         request: The request object.
         start_token_idx: The start token index of the block.
         end_token_idx: The end token index of the block.
         start_mm_idx: The start multi-modal index of the block.
-    
+
     Returns:
         A tuple of extra keys and the next multi-modal index.
     """
@@ -452,7 +453,7 @@ def check_enough_kv_cache_memory(vllm_config: VllmConfig,
                                  kv_cache_spec: KVCacheSpec,
                                  available_memory: int):
     """
-    Checks whether `available_memory` is enough for the KV cache to hold at 
+    Checks whether `available_memory` is enough for the KV cache to hold at
     least one request with the model's max_model_len.
 
     Args:
